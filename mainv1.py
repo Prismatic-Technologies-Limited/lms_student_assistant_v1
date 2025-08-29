@@ -5,11 +5,10 @@ from langchain_core.runnables import RunnablePassthrough
 from langchain_groq import ChatGroq
 
 # === CONFIG ===
-GROQ_API_KEY = "Api key here"  # replace with your key
-MODEL_NAME = "llama-3.3-70b-versatile"  # or llama3-70b, etc.
-STUDENT_API_BASE = "https://lms.prismaticcrm.com/api/student-profile"
-# === LLM Setup ===
+GROQ_API_KEY = ""  # replace with your key
+MODEL_NAME = "llama-3.3-70b-versatile"  
 
+# === LLM Setup ===
 llm = ChatGroq(
     temperature=0.7,
     model_name=MODEL_NAME,
@@ -76,9 +75,9 @@ def format_profile(json_data: dict) -> str:
     return "\n".join(lines)
 
 # === Fetch Profile & Format ===
-def fetch_student_profile(student_id: str) -> str:
+def fetch_student_profile(student_id: str, base_url: str) -> str:
     try:
-        url = f"{STUDENT_API_BASE}/{student_id}"
+        url = f"{base_url.rstrip('/')}/{student_id}"
         response = requests.get(url)
         response.raise_for_status()
         data = response.json()
@@ -90,7 +89,7 @@ def fetch_student_profile(student_id: str) -> str:
 def build_chain(student_profile: str):
     chain = (
         {
-            "student_profile": RunnablePassthrough(),
+            "student_profile": lambda x: student_profile,
             "input": RunnablePassthrough()
         }
         | prompt
@@ -99,16 +98,29 @@ def build_chain(student_profile: str):
     return chain
 
 # === FastAPI Endpoint ===
-@app.post("/chat/{student_id}")
-async def chat_with_student(student_id: str, request: Request):
+@app.post("/ask")
+async def chat_with_student(request: Request):
     body = await request.json()
-    user_question = body.get("message")
+    user_question = body.get("question")
+    api_base_url = body.get("api_base_url")
+    student_id = body.get("student_id")
 
+    # Validate inputs
     if not user_question:
         return {"error": "Missing 'message' in request body"}
+    if not api_base_url:
+        return {"error": "Missing 'api_base_url' in request body"}
+    if not student_id:
+        return {"error": "Missing 'student_id' in request body"}
 
-    profile_text = fetch_student_profile(student_id)
+    # Fetch profile
+    profile_text = fetch_student_profile(student_id, api_base_url)
+
+    # Build LLM chain
     chain = build_chain(profile_text)
     response = chain.invoke(user_question)
 
-    return {"reply": response.content}
+    return {
+        "student_id": student_id,
+        "reply": response.content
+    }
